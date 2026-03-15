@@ -1,0 +1,94 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures:
+//
+// Collection: sanctions
+// Document ID: sanctionId (string)
+// Fields:
+//   - id: string (required) - Unique ID
+//   - name: string (required) - Entity name
+//   - type: string (required) - Individual/Entity/Vessel
+//   - source: string (required) - Source name
+//   - date_updated: timestamp (optional) - Last update
+//   - action: string (required) - Listed/Delisted
+//   - url_source: string (optional) - Source URL
+//   - profile_data: string (optional) - JSON profile info
+//
+// Collection: sync_history
+// Document ID: historyId (string)
+// Fields:
+//   - source: string (required) - Source name
+//   - sync_date: timestamp (required) - Sync time
+//   - added_count: number (required) - Count added
+//   - removed_count: number (required) - Count removed
+//
+// Collection: users
+// Document ID: userId (string)
+// Fields:
+//   - email: string (required) - User email
+//   - role: string (required) - admin/user
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "saravanansivakami30@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidSanction(data) {
+      return data.keys().hasAll(['id', 'name', 'type', 'source', 'action']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 500 &&
+             data.type is string &&
+             data.source is string &&
+             data.action is string;
+    }
+
+    function isValidSyncHistory(data) {
+      return data.keys().hasAll(['source', 'sync_date', 'added_count', 'removed_count']) &&
+             data.source is string &&
+             data.sync_date is timestamp &&
+             data.added_count is number &&
+             data.removed_count is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isAdmin();
+    }
+
+    match /sanctions/{sanctionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /sync_history/{historyId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

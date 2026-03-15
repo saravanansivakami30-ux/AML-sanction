@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "Sanction": {
+      "title": "Sanction",
+      "description": "A sanction record from various global sources",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the sanction" },
+        "name": { "type": "string", "description": "Name of the individual or entity" },
+        "type": { "type": "string", "description": "Type of sanction (Individual, Entity, Vessel)" },
+        "source": { "type": "string", "description": "Source of the sanction (UN, US, MHA India, etc.)" },
+        "date_updated": { "type": "string", "format": "date-time", "description": "Last update timestamp" },
+        "action": { "type": "string", "description": "Current status (Listed, Delisted)" },
+        "url_source": { "type": "string", "description": "URL to the official source" },
+        "profile_data": { "type": "string", "description": "JSON string containing additional profile details" }
+      },
+      "required": ["id", "name", "type", "source", "action"]
+    },
+    "SyncHistory": {
+      "title": "Sync History",
+      "description": "Record of a synchronization event",
+      "type": "object",
+      "properties": {
+        "source": { "type": "string", "description": "Source that was synced" },
+        "sync_date": { "type": "string", "format": "date-time", "description": "When the sync occurred" },
+        "added_count": { "type": "integer", "description": "Number of items added" },
+        "removed_count": { "type": "integer", "description": "Number of items removed" }
+      },
+      "required": ["source", "sync_date", "added_count", "removed_count"]
+    }
+  },
+  "firestore": {
+    "/sanctions/{sanctionId}": {
+      "schema": "Sanction",
+      "description": "Collection of all sanctions"
+    },
+    "/sync_history/{historyId}": {
+      "schema": "SyncHistory",
+      "description": "Log of sync operations"
+    }
+  }
+}

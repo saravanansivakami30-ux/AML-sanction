@@ -1,0 +1,5 @@
+{
+  "name": "AML Sanction Aggregator",
+  "description": "A functional prototype of an AML Sanction Source Aggregator that scrapes official sanction updates, normalizes the data into a single unified feed, and allows users to filter by Entity/Individual and Source.",
+  "requestFramePermissions": []
+}
