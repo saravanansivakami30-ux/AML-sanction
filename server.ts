@@ -377,8 +377,23 @@ app.get('/api/sync-history', async (req, res) => {
   }
 });
 
-app.post('/api/sync', async (req, res) => {
+app.post('/api/sync/:source?', async (req, res) => {
   try {
+    const { source } = req.params;
+    
+    if (source) {
+      let result;
+      switch (source.toLowerCase()) {
+        case 'un': result = await SanctionScraper.syncUN(); break;
+        case 'us': result = await SanctionScraper.syncUS(); break;
+        case 'mha': result = await SanctionScraper.syncMHA(); break;
+        case 'fiu': result = await SanctionScraper.syncFIUIND(); break;
+        default: return res.status(400).json({ error: 'Invalid source' });
+      }
+      return res.json(result);
+    }
+
+    // Legacy support for full sync (might still timeout on Vercel)
     const results = await Promise.all([
       SanctionScraper.syncUN(),
       SanctionScraper.syncUS(),

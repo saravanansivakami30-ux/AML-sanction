@@ -85,21 +85,34 @@ function SanctionApp() {
     return () => unsubscribe();
   }, [user, authReady]);
 
+  const [syncStatus, setSyncStatus] = useState<string>('');
+
   const handleSync = async () => {
     setSyncing(true);
+    setSyncStatus('Starting sync...');
     try {
-      const res = await fetch('/api/sync', { method: 'POST' });
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Sync failed');
+      const sources = ['un', 'us', 'mha', 'fiu'];
+      const results = [];
+
+      for (const source of sources) {
+        setSyncStatus(`Syncing ${source.toUpperCase()}...`);
+        const res = await fetch(`/api/sync/${source}`, { method: 'POST' });
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(`${source.toUpperCase()} sync failed: ${errorData.error || 'Unknown error'}`);
+        }
+        results.push(await res.json());
       }
-      alert('Sync completed successfully!');
+
+      setSyncStatus('Sync complete!');
+      alert('Sync completed successfully for all sources!');
       await fetchSanctions();
     } catch (error: any) {
       console.error('Failed to sync', error);
-      alert(`Sync failed: ${error.message}. If this is on Vercel, it might be a timeout or missing service account credentials. Try syncing from the AI Studio preview first.`);
+      alert(`Sync failed: ${error.message}. This usually happens on Vercel due to the 10s timeout limit. I have refactored the sync to be sequential, which should help. If it still fails, please try syncing from the AI Studio preview.`);
     } finally {
       setSyncing(false);
+      setSyncStatus('');
     }
   };
 
@@ -236,7 +249,7 @@ function SanctionApp() {
               className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{syncing ? 'Syncing...' : 'Sync Now'}</span>
+              <span className="hidden sm:inline">{syncing ? (syncStatus || 'Syncing...') : 'Sync Now'}</span>
             </button>
 
             <button
