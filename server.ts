@@ -7,7 +7,9 @@ import * as cheerio from 'cheerio';
 import path from 'path';
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
-import firebaseConfig from './firebase-applet-config.json';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const firebaseConfig = require('./firebase-applet-config.json');
 
 console.log('--- SERVER STARTING ---');
 const app = express();
@@ -15,25 +17,28 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Initialize Firebase Admin
-console.log('Initializing Firebase Admin...');
-try {
-  // In this environment, we should use the projectId from the config
-  // and let the environment handle the credentials if possible.
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
-  console.log('Firebase Admin initialized successfully');
-} catch (e: any) {
-  if (e.code === 'app/duplicate-app') {
-    console.log('Firebase Admin already initialized');
-  } else {
-    console.error('Firebase Admin initialization failed:', e);
-  }
-}
+// Resilient Firebase Admin Initialization
+let db: admin.firestore.Firestore;
 
-const db = getFirestore(firebaseConfig.firestoreDatabaseId);
-console.log('Firestore instance retrieved');
+function getDb() {
+  if (!db) {
+    console.log('Initializing Firebase Admin...');
+    try {
+      if (admin.apps.length === 0) {
+        admin.initializeApp({
+          projectId: firebaseConfig.projectId,
+        });
+        console.log('Firebase Admin initialized');
+      }
+      db = getFirestore(firebaseConfig.firestoreDatabaseId);
+      console.log('Firestore instance retrieved');
+    } catch (e: any) {
+      console.error('Firebase initialization error:', e);
+      throw e;
+    }
+  }
+  return db;
+}
 
 export { app };
 
@@ -228,12 +233,13 @@ class SanctionScraper {
   }
 
   static async processDelta(source: string, currentItems: Map<string, any>) {
+    const firestore = getDb();
     const today = admin.firestore.Timestamp.now();
     
     console.log(`Processing delta for ${source}...`);
     
     // Get existing items for this source from Firestore
-    const sanctionsRef = db.collection('sanctions');
+    const sanctionsRef = firestore.collection('sanctions');
     const snapshot = await sanctionsRef.where('source', '==', source).get();
     
     const existingMap = new Map<string, string>();
@@ -245,39 +251,48 @@ class SanctionScraper {
     let addedCount = 0;
     let removedCount = 0;
     
-    const batch = db.batch();
+    // Chunk batches to 500 operations each
+    const CHUNK_SIZE = 450;
+    const itemsArray = Array.from(currentItems.entries());
     
-    // Check for new or re-listed items
-    for (const [id, item] of currentItems.entries()) {
-      const docRef = sanctionsRef.doc(id.replace(/\//g, '_')); // Ensure safe ID
+    for (let i = 0; i < itemsArray.length; i += CHUNK_SIZE) {
+      const batch = firestore.batch();
+      const chunk = itemsArray.slice(i, i + CHUNK_SIZE);
       
-      if (!existingMap.has(id)) {
-        // New item
-        batch.set(docRef, {
-          ...item,
-          date_updated: today,
-          action: 'Listed'
-        });
-        addedCount++;
-      } else if (existingMap.get(id) === 'Delisted') {
-        // Re-listed item
-        batch.update(docRef, {
-          action: 'Listed',
-          date_updated: today,
-          profile_data: item.profile_data || null
-        });
-        addedCount++;
-      } else {
-        // Already listed, update profile data
-        batch.update(docRef, {
-          profile_data: item.profile_data || null
-        });
+      for (const [id, item] of chunk) {
+        const docRef = sanctionsRef.doc(id.replace(/\//g, '_'));
+        
+        if (!existingMap.has(id)) {
+          batch.set(docRef, {
+            ...item,
+            date_updated: today,
+            action: 'Listed'
+          });
+          addedCount++;
+        } else if (existingMap.get(id) === 'Delisted') {
+          batch.update(docRef, {
+            action: 'Listed',
+            date_updated: today,
+            profile_data: item.profile_data || null
+          });
+          addedCount++;
+        } else {
+          batch.update(docRef, {
+            profile_data: item.profile_data || null
+          });
+        }
       }
+      await batch.commit();
+      console.log(`Committed chunk ${i / CHUNK_SIZE + 1} for ${source}`);
     }
     
-    // Check for delisted items
-    for (const [id, action] of existingMap.entries()) {
-      if (!currentItems.has(id) && action !== 'Delisted') {
+    // Handle delisted items in a separate batch
+    const delistedItems = Array.from(existingMap.entries()).filter(([id, action]) => !currentItems.has(id) && action !== 'Delisted');
+    for (let i = 0; i < delistedItems.length; i += CHUNK_SIZE) {
+      const batch = firestore.batch();
+      const chunk = delistedItems.slice(i, i + CHUNK_SIZE);
+      
+      for (const [id, action] of chunk) {
         const docRef = sanctionsRef.doc(id.replace(/\//g, '_'));
         batch.update(docRef, {
           action: 'Delisted',
@@ -285,28 +300,33 @@ class SanctionScraper {
         });
         removedCount++;
       }
+      await batch.commit();
     }
     
     // Log history
-    const historyRef = db.collection('sync_history').doc();
-    batch.set(historyRef, {
+    const historyRef = firestore.collection('sync_history').doc();
+    await historyRef.set({
       source,
       sync_date: today,
       added_count: addedCount,
       removed_count: removedCount
     });
     
-    await batch.commit();
     console.log(`${source} sync complete. Added: ${addedCount}, Removed: ${removedCount}`);
   }
 }
 
 // API Routes
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', environment: process.env.NODE_ENV, vercel: !!process.env.VERCEL });
+});
+
 app.get('/api/sanctions', async (req, res) => {
   try {
+    const firestore = getDb();
     const { search, source, type, action, limit = 50 } = req.query;
     
-    let query: admin.firestore.Query = db.collection('sanctions');
+    let query: admin.firestore.Query = firestore.collection('sanctions');
     
     if (source) {
       query = query.where('source', '==', source);
@@ -341,7 +361,8 @@ app.get('/api/sanctions', async (req, res) => {
 
 app.get('/api/sanctions/export', async (req, res) => {
   try {
-    const snapshot = await db.collection('sanctions').orderBy('date_updated', 'desc').get();
+    const firestore = getDb();
+    const snapshot = await firestore.collection('sanctions').orderBy('date_updated', 'desc').get();
     const rows = snapshot.docs.map(doc => doc.data());
     
     if (rows.length === 0) {
@@ -369,7 +390,8 @@ app.get('/api/sanctions/export', async (req, res) => {
 
 app.get('/api/sync-history', async (req, res) => {
   try {
-    const snapshot = await db.collection('sync_history').orderBy('sync_date', 'desc').limit(20).get();
+    const firestore = getDb();
+    const snapshot = await firestore.collection('sync_history').orderBy('sync_date', 'desc').limit(20).get();
     const rows = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.json(rows);
   } catch (error: any) {

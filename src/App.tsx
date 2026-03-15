@@ -92,24 +92,38 @@ function SanctionApp() {
     setSyncStatus('Starting sync...');
     try {
       const sources = ['un', 'us', 'mha', 'fiu'];
-      const results = [];
+      let successCount = 0;
+      let failCount = 0;
 
       for (const source of sources) {
-        setSyncStatus(`Syncing ${source.toUpperCase()}...`);
-        const res = await fetch(`/api/sync/${source}`, { method: 'POST' });
-        if (!res.ok) {
-          const errorData = await res.json();
-          throw new Error(`${source.toUpperCase()} sync failed: ${errorData.error || 'Unknown error'}`);
+        try {
+          setSyncStatus(`Syncing ${source.toUpperCase()}...`);
+          const res = await fetch(`/api/sync/${source}`, { method: 'POST' });
+          if (!res.ok) {
+            const errorData = await res.json();
+            console.error(`${source.toUpperCase()} sync failed:`, errorData.error);
+            failCount++;
+          } else {
+            successCount++;
+          }
+        } catch (err) {
+          console.error(`${source.toUpperCase()} network error:`, err);
+          failCount++;
         }
-        results.push(await res.json());
       }
 
       setSyncStatus('Sync complete!');
-      alert('Sync completed successfully for all sources!');
+      if (failCount === 0) {
+        alert('Sync completed successfully for all sources!');
+      } else if (successCount > 0) {
+        alert(`Sync partially successful. ${successCount} sources synced, ${failCount} failed. This is likely due to Vercel's 10s timeout limit on some sources.`);
+      } else {
+        alert('Sync failed for all sources. Please check the console for details or try syncing from the AI Studio preview.');
+      }
       await fetchSanctions();
     } catch (error: any) {
-      console.error('Failed to sync', error);
-      alert(`Sync failed: ${error.message}. This usually happens on Vercel due to the 10s timeout limit. I have refactored the sync to be sequential, which should help. If it still fails, please try syncing from the AI Studio preview.`);
+      console.error('Global sync error:', error);
+      alert(`Global sync error: ${error.message}`);
     } finally {
       setSyncing(false);
       setSyncStatus('');
