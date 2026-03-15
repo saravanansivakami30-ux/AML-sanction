@@ -97,10 +97,23 @@ function SanctionApp() {
     }
   };
 
+  const handleSignIn = async () => {
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      console.error('Sign in failed:', error);
+      alert(`Sign in failed: ${error.message}. If you are on a new domain (like Vercel), make sure to add it to "Authorized Domains" in the Firebase Console.`);
+    }
+  };
+
   const fetchAdverseMedia = async (id: string, name: string) => {
     setAdverseMedia(prev => ({ ...prev, [id]: { loading: true } }));
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      // Use the environment variable provided by the platform or Vercel
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error('Gemini API key is not configured.');
+      
+      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: `Search for recent adverse media, news articles, or official reports regarding financial crime, terrorism, sanctions, or illegal activities for the entity or individual named "${name}". Summarize the findings briefly.`,
@@ -164,7 +177,7 @@ function SanctionApp() {
             Please sign in with your Google account to access the sanction lists and adverse media screening tool.
           </p>
           <button
-            onClick={signInWithGoogle}
+            onClick={handleSignIn}
             className="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-3.5 rounded-xl font-medium hover:bg-slate-800 transition-all shadow-lg hover:shadow-slate-200"
           >
             <LogIn className="w-5 h-5" />
