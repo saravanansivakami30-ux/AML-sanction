@@ -88,10 +88,16 @@ function SanctionApp() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      await fetch('/api/sync', { method: 'POST' });
+      const res = await fetch('/api/sync', { method: 'POST' });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Sync failed');
+      }
+      alert('Sync completed successfully!');
       await fetchSanctions();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to sync', error);
+      alert(`Sync failed: ${error.message}. If this is on Vercel, it might be a timeout or missing service account credentials. Try syncing from the AI Studio preview first.`);
     } finally {
       setSyncing(false);
     }
@@ -154,6 +160,16 @@ function SanctionApp() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search, user]);
+
+  const formatDate = (date: any) => {
+    if (!date) return 'N/A';
+    // Handle Firestore Timestamps
+    if (date.seconds) {
+      return format(new Date(date.seconds * 1000), 'MMM d, yyyy HH:mm');
+    }
+    // Handle ISO strings or Date objects
+    return format(new Date(date), 'MMM d, yyyy HH:mm');
+  };
 
   if (!authReady) {
     return (
@@ -361,7 +377,7 @@ function SanctionApp() {
                             </span>
                           </td>
                           <td className="px-6 py-4 text-slate-500">
-                            {sanction.date_updated ? format(new Date(sanction.date_updated), 'MMM d, yyyy HH:mm') : 'N/A'}
+                            {formatDate(sanction.date_updated)}
                           </td>
                           <td className="px-6 py-4 text-right">
                             <a
@@ -474,7 +490,7 @@ function SanctionApp() {
                     syncHistory.map((history) => (
                       <tr key={history.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4 text-slate-900 font-medium">
-                          {format(new Date(history.sync_date), 'MMM d, yyyy HH:mm:ss')}
+                          {formatDate(history.sync_date)}
                         </td>
                         <td className="px-6 py-4">
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 border border-slate-200">

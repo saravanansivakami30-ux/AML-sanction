@@ -229,7 +229,6 @@ class SanctionScraper {
 
   static async processDelta(source: string, currentItems: Map<string, any>) {
     const today = admin.firestore.Timestamp.now();
-    const todayStr = new Date().toISOString();
     
     console.log(`Processing delta for ${source}...`);
     
@@ -256,7 +255,7 @@ class SanctionScraper {
         // New item
         batch.set(docRef, {
           ...item,
-          date_updated: todayStr,
+          date_updated: today,
           action: 'Listed'
         });
         addedCount++;
@@ -264,7 +263,7 @@ class SanctionScraper {
         // Re-listed item
         batch.update(docRef, {
           action: 'Listed',
-          date_updated: todayStr,
+          date_updated: today,
           profile_data: item.profile_data || null
         });
         addedCount++;
@@ -282,7 +281,7 @@ class SanctionScraper {
         const docRef = sanctionsRef.doc(id.replace(/\//g, '_'));
         batch.update(docRef, {
           action: 'Delisted',
-          date_updated: todayStr
+          date_updated: today
         });
         removedCount++;
       }
@@ -292,7 +291,7 @@ class SanctionScraper {
     const historyRef = db.collection('sync_history').doc();
     batch.set(historyRef, {
       source,
-      sync_date: todayStr,
+      sync_date: today,
       added_count: addedCount,
       removed_count: removedCount
     });
