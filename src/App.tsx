@@ -80,17 +80,32 @@ function SanctionApp() {
     if (!user) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (search) params.append('search', search);
-      if (sourceFilter) params.append('source', sourceFilter);
-      if (typeFilter) params.append('type', typeFilter);
-      if (actionFilter) params.append('action', actionFilter);
+      let q = query(collection(db, 'sanctions'), orderBy('date_updated', 'desc'), limit(100));
       
-      const res = await fetch(`/api/sanctions?${params.toString()}`);
-      const data = await res.json();
+      if (sourceFilter) {
+        q = query(collection(db, 'sanctions'), where('source', '==', sourceFilter), orderBy('date_updated', 'desc'), limit(100));
+      }
+      
+      if (typeFilter) {
+        q = query(q, where('type', '==', typeFilter));
+      }
+      
+      if (actionFilter) {
+        q = query(q, where('action', '==', actionFilter));
+      }
+      
+      const snapshot = await getDocs(q);
+      let data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sanction));
+      
+      if (search) {
+        const searchLower = search.toLowerCase();
+        data = data.filter(s => s.name.toLowerCase().includes(searchLower));
+      }
+      
       setSanctions(data);
     } catch (error) {
       console.error('Failed to fetch sanctions', error);
+      setSanctions([]);
     } finally {
       setLoading(false);
     }
@@ -127,7 +142,7 @@ function SanctionApp() {
     
     let addedCount = 0;
     let removedCount = 0;
-    const CHUNK_SIZE = 400;
+    const CHUNK_SIZE = 200; // Reduced chunk size
     
     // Add/Update
     for (let i = 0; i < currentItems.length; i += CHUNK_SIZE) {
@@ -149,6 +164,8 @@ function SanctionApp() {
         }
       }
       await batch.commit();
+      // Small delay to prevent resource exhaustion
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
     
     // Delist
@@ -165,6 +182,7 @@ function SanctionApp() {
         removedCount++;
       }
       await batch.commit();
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
     
     // History

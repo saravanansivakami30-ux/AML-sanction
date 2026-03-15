@@ -5,8 +5,8 @@ import { parse } from 'csv-parse/sync';
 import { parseStringPromise } from 'xml2js';
 import * as cheerio from 'cheerio';
 import path from 'path';
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const firebaseConfig = require('./firebase-applet-config.json');
@@ -18,14 +18,14 @@ const PORT = 3000;
 app.use(express.json());
 
 // Resilient Firebase Admin Initialization
-let db: admin.firestore.Firestore;
+let db: any;
 
 function getDb() {
   if (!db) {
     console.log('Initializing Firebase Admin...');
     try {
-      if (admin.apps.length === 0) {
-        admin.initializeApp({
+      if (getApps().length === 0) {
+        initializeApp({
           projectId: firebaseConfig.projectId,
         });
         console.log('Firebase Admin initialized');
@@ -213,7 +213,7 @@ app.get('/api/sanctions', async (req, res) => {
     const firestore = getDb();
     const { search, source, type, action, limit = 50 } = req.query;
     
-    let query: admin.firestore.Query = firestore.collection('sanctions');
+    let query = firestore.collection('sanctions');
     
     if (source) {
       query = query.where('source', '==', source);
@@ -227,22 +227,18 @@ app.get('/api/sanctions', async (req, res) => {
       query = query.where('action', '==', action);
     }
     
-    // Note: Firestore doesn't support partial string matching (LIKE) natively without external search engines.
-    // We'll fetch and filter in memory for small datasets, or use a simpler prefix match if possible.
-    // For this demo, we'll fetch more and filter in memory if search is present.
-    
     const snapshot = await query.orderBy('date_updated', 'desc').limit(Number(limit) * 2).get();
-    let rows = snapshot.docs.map(doc => doc.data());
+    let rows = snapshot.docs.map((doc: any) => doc.data());
     
     if (search) {
       const searchLower = String(search).toLowerCase();
-      rows = rows.filter(row => row.name.toLowerCase().includes(searchLower));
+      rows = rows.filter((row: any) => row.name.toLowerCase().includes(searchLower));
     }
     
     res.json(rows.slice(0, Number(limit)));
   } catch (error: any) {
     console.error('Firestore error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json([]); // Return empty array to prevent frontend crash
   }
 });
 
