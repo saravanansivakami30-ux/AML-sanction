@@ -78,12 +78,14 @@ service cloud.firestore {
 
     match /sanctions/{sanctionId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidSanction(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /sync_history/{historyId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow create: if isAdmin() && isValidSyncHistory(request.resource.data);
+      allow update, delete: if isAdmin();
     }
 
     // Default deny

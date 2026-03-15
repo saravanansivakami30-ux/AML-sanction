@@ -5,7 +5,7 @@ import Markdown from 'react-markdown';
 import { GoogleGenAI } from '@google/genai';
 import { auth, signInWithGoogle, logout, db, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, orderBy, limit, onSnapshot, where } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, where, getDocs, Timestamp, writeBatch, doc, setDoc, getDoc } from 'firebase/firestore';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 interface Sanction {
@@ -41,6 +41,32 @@ function SanctionApp() {
   const [activeTab, setActiveTab] = useState<'feed' | 'history'>('feed');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [adverseMedia, setAdverseMedia] = useState<Record<string, { loading: boolean, data?: { summary: string, articles: any[] }, error?: string }>>({});
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setIsAdmin(false);
+      return;
+    }
+    
+    const checkAdmin = async () => {
+      if (user.email === 'saravanansivakami30@gmail.com') {
+        setIsAdmin(true);
+        return;
+      }
+      
+      try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists() && userDoc.data()?.role === 'admin') {
+          setIsAdmin(true);
+        }
+      } catch (e) {
+        console.error('Error checking admin status:', e);
+      }
+    };
+    
+    checkAdmin();
+  }, [user]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -87,7 +113,71 @@ function SanctionApp() {
 
   const [syncStatus, setSyncStatus] = useState<string>('');
 
+  const processDelta = async (source: string, currentItems: any[]) => {
+    const today = Timestamp.now();
+    const sanctionsRef = collection(db, 'sanctions');
+    const q = query(sanctionsRef, where('source', '==', source));
+    const snapshot = await getDocs(q);
+    
+    const existingMap = new Map<string, string>();
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      existingMap.set(data.id, data.action);
+    });
+    
+    let addedCount = 0;
+    let removedCount = 0;
+    const CHUNK_SIZE = 400;
+    
+    // Add/Update
+    for (let i = 0; i < currentItems.length; i += CHUNK_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = currentItems.slice(i, i + CHUNK_SIZE);
+      
+      for (const item of chunk) {
+        const docId = item.id.replace(/\//g, '_');
+        const docRef = doc(db, 'sanctions', docId);
+        
+        if (!existingMap.has(item.id)) {
+          batch.set(docRef, { ...item, date_updated: today, action: 'Listed' });
+          addedCount++;
+        } else if (existingMap.get(item.id) === 'Delisted') {
+          batch.update(docRef, { action: 'Listed', date_updated: today, profile_data: item.profile_data || null });
+          addedCount++;
+        } else {
+          batch.update(docRef, { profile_data: item.profile_data || null });
+        }
+      }
+      await batch.commit();
+    }
+    
+    // Delist
+    const currentIds = new Set(currentItems.map(i => i.id));
+    const delistedItems = Array.from(existingMap.entries()).filter(([id, action]) => !currentIds.has(id) && action !== 'Delisted');
+    
+    for (let i = 0; i < delistedItems.length; i += CHUNK_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = delistedItems.slice(i, i + CHUNK_SIZE);
+      for (const [id] of chunk) {
+        const docId = id.replace(/\//g, '_');
+        const docRef = doc(db, 'sanctions', docId);
+        batch.update(docRef, { action: 'Delisted', date_updated: today });
+        removedCount++;
+      }
+      await batch.commit();
+    }
+    
+    // History
+    const historyRef = doc(collection(db, 'sync_history'));
+    await setDoc(historyRef, { source, sync_date: today, added_count: addedCount, removed_count: removedCount });
+  };
+
   const handleSync = async () => {
+    if (!isAdmin) {
+      alert('Only admins can perform sync operations.');
+      return;
+    }
+
     setSyncing(true);
     setSyncStatus('Starting sync...');
     try {
@@ -97,17 +187,21 @@ function SanctionApp() {
 
       for (const source of sources) {
         try {
-          setSyncStatus(`Syncing ${source.toUpperCase()}...`);
-          const res = await fetch(`/api/sync/${source}`, { method: 'POST' });
+          setSyncStatus(`Fetching ${source.toUpperCase()} data...`);
+          const res = await fetch(`/api/scrape/${source}`);
           if (!res.ok) {
             const errorData = await res.json();
-            console.error(`${source.toUpperCase()} sync failed:`, errorData.error);
-            failCount++;
-          } else {
-            successCount++;
+            throw new Error(errorData.error || 'Fetch failed');
           }
-        } catch (err) {
-          console.error(`${source.toUpperCase()} network error:`, err);
+          const data = await res.json();
+          
+          setSyncStatus(`Updating ${source.toUpperCase()} in Firestore...`);
+          const sourceName = source === 'mha' ? 'MHA India' : (source === 'us' ? 'US' : (source === 'un' ? 'UN' : 'FIU-IND'));
+          await processDelta(sourceName, data);
+          
+          successCount++;
+        } catch (err: any) {
+          console.error(`${source.toUpperCase()} sync failed:`, err);
           failCount++;
         }
       }
@@ -116,9 +210,9 @@ function SanctionApp() {
       if (failCount === 0) {
         alert('Sync completed successfully for all sources!');
       } else if (successCount > 0) {
-        alert(`Sync partially successful. ${successCount} sources synced, ${failCount} failed. This is likely due to Vercel's 10s timeout limit on some sources.`);
+        alert(`Sync partially successful. ${successCount} sources synced, ${failCount} failed. Check console for details.`);
       } else {
-        alert('Sync failed for all sources. Please check the console for details or try syncing from the AI Studio preview.');
+        alert('Sync failed for all sources. Check console for details.');
       }
       await fetchSanctions();
     } catch (error: any) {

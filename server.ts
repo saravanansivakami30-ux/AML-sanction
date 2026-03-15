@@ -44,275 +44,162 @@ export { app };
 
 // Scrapers
 class SanctionScraper {
-  static async syncUN() {
-    console.log('Syncing UN Security Council...');
-    try {
-      const response = await axios.get('https://scsanctions.un.org/resources/xml/en/consolidated.xml', { timeout: 60000 });
-      const result = await parseStringPromise(response.data);
+  static async scrapeUN() {
+    console.log('Scraping UN Security Council...');
+    const response = await axios.get('https://scsanctions.un.org/resources/xml/en/consolidated.xml', { timeout: 60000 });
+    const result = await parseStringPromise(response.data);
+    
+    const individuals = result.CONSOLIDATED_LIST?.INDIVIDUALS?.[0]?.INDIVIDUAL || [];
+    const entities = result.CONSOLIDATED_LIST?.ENTITIES?.[0]?.ENTITY || [];
+    
+    const items: any[] = [];
+    
+    individuals.forEach((ind: any) => {
+      const id = `UN-IND-${ind.DATAID?.[0]}`;
+      const firstName = ind.FIRST_NAME?.[0] || '';
+      const secondName = ind.SECOND_NAME?.[0] || '';
+      const thirdName = ind.THIRD_NAME?.[0] || '';
+      const name = `${firstName} ${secondName} ${thirdName}`.trim();
       
-      const individuals = result.CONSOLIDATED_LIST?.INDIVIDUALS?.[0]?.INDIVIDUAL || [];
-      const entities = result.CONSOLIDATED_LIST?.ENTITIES?.[0]?.ENTITY || [];
+      const profileData = {
+        nationality: ind.NATIONALITY?.[0]?.VALUE?.[0] || '',
+        designation: ind.DESIGNATION?.[0]?.VALUE?.[0] || '',
+        date_of_birth: ind.INDIVIDUAL_DATE_OF_BIRTH?.[0]?.DATE?.[0] || '',
+        place_of_birth: ind.INDIVIDUAL_PLACE_OF_BIRTH?.[0]?.CITY?.[0] || '',
+        comments: ind.COMMENTS1?.[0] || ''
+      };
       
-      const currentItems = new Map<string, any>();
+      if (name) {
+        items.push({
+          id,
+          name,
+          type: 'Individual',
+          source: 'UN',
+          url_source: 'https://www.un.org/securitycouncil/sanctions/un-sc-consolidated-list',
+          profile_data: JSON.stringify(profileData)
+        });
+      }
+    });
+    
+    entities.forEach((ent: any) => {
+      const id = `UN-ENT-${ent.DATAID?.[0]}`;
+      const name = ent.FIRST_NAME?.[0] || '';
       
-      individuals.forEach((ind: any) => {
-        const id = `UN-IND-${ind.DATAID?.[0]}`;
-        const firstName = ind.FIRST_NAME?.[0] || '';
-        const secondName = ind.SECOND_NAME?.[0] || '';
-        const thirdName = ind.THIRD_NAME?.[0] || '';
-        const name = `${firstName} ${secondName} ${thirdName}`.trim();
+      const profileData = {
+        comments: ent.COMMENTS1?.[0] || ''
+      };
+      
+      if (name) {
+        items.push({
+          id,
+          name,
+          type: 'Entity',
+          source: 'UN',
+          url_source: 'https://www.un.org/securitycouncil/sanctions/un-sc-consolidated-list',
+          profile_data: JSON.stringify(profileData)
+        });
+      }
+    });
+    
+    return items;
+  }
+
+  static async scrapeUS() {
+    console.log('Scraping US OFAC...');
+    const response = await axios.get('https://www.treasury.gov/ofac/downloads/sdn.csv', { timeout: 60000 });
+    const records = parse(response.data, {
+      skip_empty_lines: true,
+      relax_column_count: true
+    });
+    
+    const items: any[] = [];
+    
+    records.forEach((record: any[]) => {
+      if (record.length >= 12) {
+        const id = `US-${record[0]}`;
+        const name = record[1];
+        const typeRaw = record[2];
+        
+        let type = 'Entity';
+        if (typeRaw.includes('individual')) type = 'Individual';
+        else if (typeRaw.includes('vessel')) type = 'Vessel';
         
         const profileData = {
-          nationality: ind.NATIONALITY?.[0]?.VALUE?.[0] || '',
-          designation: ind.DESIGNATION?.[0]?.VALUE?.[0] || '',
-          date_of_birth: ind.INDIVIDUAL_DATE_OF_BIRTH?.[0]?.DATE?.[0] || '',
-          place_of_birth: ind.INDIVIDUAL_PLACE_OF_BIRTH?.[0]?.CITY?.[0] || '',
-          comments: ind.COMMENTS1?.[0] || ''
+          program: record[3] || '',
+          title: record[4] || '',
+          vessel_type: record[6] || '',
+          vessel_flag: record[9] || '',
+          vessel_owner: record[10] || '',
+          remarks: record[11] || ''
         };
         
-        if (name) {
-          currentItems.set(id, {
+        if (name && name !== '-0-') {
+          items.push({
             id,
             name,
-            type: 'Individual',
-            source: 'UN',
-            url_source: 'https://www.un.org/securitycouncil/sanctions/un-sc-consolidated-list',
+            type,
+            source: 'US',
+            url_source: 'https://ofac.treasury.gov/',
             profile_data: JSON.stringify(profileData)
           });
         }
-      });
-      
-      entities.forEach((ent: any) => {
-        const id = `UN-ENT-${ent.DATAID?.[0]}`;
-        const name = ent.FIRST_NAME?.[0] || '';
+      }
+    });
+    
+    return items;
+  }
+
+  static async scrapeMHA() {
+    console.log('Scraping MHA Banned Organisations...');
+    const response = await axios.get('https://www.mha.gov.in/en/banned-organisations', { timeout: 60000 });
+    const $ = cheerio.load(response.data);
+    
+    const items: any[] = [];
+    
+    $('table').first().find('tr').each((i, el) => {
+      const tds = $(el).find('td');
+      if (tds.length >= 2) {
+        const idNum = $(tds[0]).text().trim();
+        const name = $(tds[1]).text().trim();
         
-        const profileData = {
-          comments: ent.COMMENTS1?.[0] || ''
-        };
-        
-        if (name) {
-          currentItems.set(id, {
+        if (name && idNum) {
+          const id = `MHA-ORG-${idNum}`;
+          items.push({
             id,
             name,
             type: 'Entity',
-            source: 'UN',
-            url_source: 'https://www.un.org/securitycouncil/sanctions/un-sc-consolidated-list',
-            profile_data: JSON.stringify(profileData)
-          });
-        }
-      });
-      
-      await this.processDelta('UN', currentItems);
-      return { success: true, source: 'UN' };
-    } catch (error: any) {
-      console.error('Error syncing UN:', error.message);
-      return { success: false, source: 'UN', error: error.message };
-    }
-  }
-
-  static async syncUS() {
-    console.log('Syncing US OFAC...');
-    try {
-      const response = await axios.get('https://www.treasury.gov/ofac/downloads/sdn.csv', { timeout: 60000 });
-      const records = parse(response.data, {
-        skip_empty_lines: true,
-        relax_column_count: true
-      });
-      
-      const currentItems = new Map<string, any>();
-      
-      records.forEach((record: any[]) => {
-        if (record.length >= 12) {
-          const id = `US-${record[0]}`;
-          const name = record[1];
-          const typeRaw = record[2];
-          
-          let type = 'Entity';
-          if (typeRaw.includes('individual')) type = 'Individual';
-          else if (typeRaw.includes('vessel')) type = 'Vessel';
-          
-          const profileData = {
-            program: record[3] || '',
-            title: record[4] || '',
-            vessel_type: record[6] || '',
-            vessel_flag: record[9] || '',
-            vessel_owner: record[10] || '',
-            remarks: record[11] || ''
-          };
-          
-          if (name && name !== '-0-') {
-            currentItems.set(id, {
-              id,
-              name,
-              type,
-              source: 'US',
-              url_source: 'https://ofac.treasury.gov/',
-              profile_data: JSON.stringify(profileData)
-            });
-          }
-        }
-      });
-      
-      await this.processDelta('US', currentItems);
-      return { success: true, source: 'US' };
-    } catch (error: any) {
-      console.error('Error syncing US OFAC:', error.message);
-      return { success: false, source: 'US', error: error.message };
-    }
-  }
-
-  static async syncMHA() {
-    console.log('Syncing MHA Banned Organisations...');
-    try {
-      const response = await axios.get('https://www.mha.gov.in/en/banned-organisations', { timeout: 60000 });
-      const $ = cheerio.load(response.data);
-      
-      const currentItems = new Map<string, any>();
-      
-      $('table').first().find('tr').each((i, el) => {
-        const tds = $(el).find('td');
-        if (tds.length >= 2) {
-          const idNum = $(tds[0]).text().trim();
-          const name = $(tds[1]).text().trim();
-          
-          if (name && idNum) {
-            const id = `MHA-ORG-${idNum}`;
-            currentItems.set(id, {
-              id,
-              name,
-              type: 'Entity',
-              source: 'MHA India',
-              url_source: 'https://www.mha.gov.in/en/banned-organisations',
-              profile_data: JSON.stringify({
-                remarks: 'Banned under Unlawful Activities (Prevention) Act, 1967'
-              })
-            });
-          }
-        }
-      });
-      
-      await this.processDelta('MHA India', currentItems);
-      return { success: true, source: 'MHA India' };
-    } catch (error: any) {
-      console.error('Error syncing MHA India:', error.message);
-      return { success: false, source: 'MHA India', error: error.message };
-    }
-  }
-
-  static async syncFIUIND() {
-    console.log('Syncing FIU-IND High Risk Entities (Simulated)...');
-    try {
-      const simulatedData = [
-        { id: 'FIU-001', name: 'Simulated Shell Corp A', type: 'Entity', reason: 'High-risk jurisdiction transactions' },
-        { id: 'FIU-002', name: 'Simulated Hawala Operator B', type: 'Individual', reason: 'Unregistered money service business' },
-        { id: 'FIU-003', name: 'Simulated Crypto Exchange C', type: 'Entity', reason: 'Non-compliant with PMLA guidelines' }
-      ];
-      
-      const currentItems = new Map<string, any>();
-      
-      simulatedData.forEach(item => {
-        currentItems.set(item.id, {
-          id: item.id,
-          name: item.name,
-          type: item.type,
-          source: 'FIU-IND',
-          url_source: 'https://fiuindia.gov.in/',
-          profile_data: JSON.stringify({
-            reason: item.reason,
-            status: 'High Risk / Alert'
-          })
-        });
-      });
-      
-      await this.processDelta('FIU-IND', currentItems);
-      return { success: true, source: 'FIU-IND' };
-    } catch (error: any) {
-      console.error('Error syncing FIU-IND:', error.message);
-      return { success: false, source: 'FIU-IND', error: error.message };
-    }
-  }
-
-  static async processDelta(source: string, currentItems: Map<string, any>) {
-    const firestore = getDb();
-    const today = admin.firestore.Timestamp.now();
-    
-    console.log(`Processing delta for ${source}...`);
-    
-    // Get existing items for this source from Firestore
-    const sanctionsRef = firestore.collection('sanctions');
-    const snapshot = await sanctionsRef.where('source', '==', source).get();
-    
-    const existingMap = new Map<string, string>();
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      existingMap.set(data.id, data.action);
-    });
-    
-    let addedCount = 0;
-    let removedCount = 0;
-    
-    // Chunk batches to 500 operations each
-    const CHUNK_SIZE = 450;
-    const itemsArray = Array.from(currentItems.entries());
-    
-    for (let i = 0; i < itemsArray.length; i += CHUNK_SIZE) {
-      const batch = firestore.batch();
-      const chunk = itemsArray.slice(i, i + CHUNK_SIZE);
-      
-      for (const [id, item] of chunk) {
-        const docRef = sanctionsRef.doc(id.replace(/\//g, '_'));
-        
-        if (!existingMap.has(id)) {
-          batch.set(docRef, {
-            ...item,
-            date_updated: today,
-            action: 'Listed'
-          });
-          addedCount++;
-        } else if (existingMap.get(id) === 'Delisted') {
-          batch.update(docRef, {
-            action: 'Listed',
-            date_updated: today,
-            profile_data: item.profile_data || null
-          });
-          addedCount++;
-        } else {
-          batch.update(docRef, {
-            profile_data: item.profile_data || null
+            source: 'MHA India',
+            url_source: 'https://www.mha.gov.in/en/banned-organisations',
+            profile_data: JSON.stringify({
+              remarks: 'Banned under Unlawful Activities (Prevention) Act, 1967'
+            })
           });
         }
       }
-      await batch.commit();
-      console.log(`Committed chunk ${i / CHUNK_SIZE + 1} for ${source}`);
-    }
-    
-    // Handle delisted items in a separate batch
-    const delistedItems = Array.from(existingMap.entries()).filter(([id, action]) => !currentItems.has(id) && action !== 'Delisted');
-    for (let i = 0; i < delistedItems.length; i += CHUNK_SIZE) {
-      const batch = firestore.batch();
-      const chunk = delistedItems.slice(i, i + CHUNK_SIZE);
-      
-      for (const [id, action] of chunk) {
-        const docRef = sanctionsRef.doc(id.replace(/\//g, '_'));
-        batch.update(docRef, {
-          action: 'Delisted',
-          date_updated: today
-        });
-        removedCount++;
-      }
-      await batch.commit();
-    }
-    
-    // Log history
-    const historyRef = firestore.collection('sync_history').doc();
-    await historyRef.set({
-      source,
-      sync_date: today,
-      added_count: addedCount,
-      removed_count: removedCount
     });
     
-    console.log(`${source} sync complete. Added: ${addedCount}, Removed: ${removedCount}`);
+    return items;
+  }
+
+  static async scrapeFIUIND() {
+    console.log('Scraping FIU-IND High Risk Entities (Simulated)...');
+    const simulatedData = [
+      { id: 'FIU-001', name: 'Simulated Shell Corp A', type: 'Entity', reason: 'High-risk jurisdiction transactions' },
+      { id: 'FIU-002', name: 'Simulated Hawala Operator B', type: 'Individual', reason: 'Unregistered money service business' },
+      { id: 'FIU-003', name: 'Simulated Crypto Exchange C', type: 'Entity', reason: 'Non-compliant with PMLA guidelines' }
+    ];
+    
+    return simulatedData.map(item => ({
+      id: item.id,
+      name: item.name,
+      type: item.type,
+      source: 'FIU-IND',
+      url_source: 'https://fiuindia.gov.in/',
+      profile_data: JSON.stringify({
+        reason: item.reason,
+        status: 'High Risk / Alert'
+      })
+    }));
   }
 }
 
@@ -399,31 +286,20 @@ app.get('/api/sync-history', async (req, res) => {
   }
 });
 
-app.post('/api/sync/:source?', async (req, res) => {
+app.get('/api/scrape/:source', async (req, res) => {
   try {
     const { source } = req.params;
-    
-    if (source) {
-      let result;
-      switch (source.toLowerCase()) {
-        case 'un': result = await SanctionScraper.syncUN(); break;
-        case 'us': result = await SanctionScraper.syncUS(); break;
-        case 'mha': result = await SanctionScraper.syncMHA(); break;
-        case 'fiu': result = await SanctionScraper.syncFIUIND(); break;
-        default: return res.status(400).json({ error: 'Invalid source' });
-      }
-      return res.json(result);
+    let data;
+    switch (source.toLowerCase()) {
+      case 'un': data = await SanctionScraper.scrapeUN(); break;
+      case 'us': data = await SanctionScraper.scrapeUS(); break;
+      case 'mha': data = await SanctionScraper.scrapeMHA(); break;
+      case 'fiu': data = await SanctionScraper.scrapeFIUIND(); break;
+      default: return res.status(400).json({ error: 'Invalid source' });
     }
-
-    // Legacy support for full sync (might still timeout on Vercel)
-    const results = await Promise.all([
-      SanctionScraper.syncUN(),
-      SanctionScraper.syncUS(),
-      SanctionScraper.syncMHA(),
-      SanctionScraper.syncFIUIND()
-    ]);
-    res.json({ success: true, results });
+    res.json(data);
   } catch (error: any) {
+    console.error('Scrape error:', error);
     res.status(500).json({ error: error.message });
   }
 });
